@@ -111,13 +111,16 @@ var rec = RecogClass ? new RecogClass() : null;
 var escuchando = false;
 var hablando = false; // true mientras la app está hablando, para no escucharse a sí misma
 
-// El reconocimiento continuo en Android reinicia su sesión cada varios
-// segundos, y al reiniciar a veces vuelve a entregar la última frase ya
-// procesada como si fuera nueva. En vez de una ventana de tiempo (que puede
-// ser más corta que el intervalo real entre reinicios), se recuerda cada
-// frase ya procesada en ESTE pedido y se ignora si se repite exacta,
-// sin importar cuánto tiempo pase. Se limpia al reiniciar o enviar el pedido.
-var frasesProcesadas = {};
+// En frases largas, Android a veces "revisa" un resultado ya marcado como
+// final y lo vuelve a entregar completo pero más largo (ej: primero entrega
+// "para llevar salchipapa de 35" y momentos después entrega de nuevo
+// "para llevar salchipapa de 35 con salsa de ajo"). Si se reprocesara cada
+// entrega completa desde el inicio, el producto se agregaría dos veces.
+// Por eso se recuerda la frase más larga procesada hasta ahora y, cuando
+// llega una nueva que empieza igual (una "ampliación"), solo se procesa la
+// parte nueva al final. Si llega una frase idéntica (repetición del bug de
+// reinicio de Android), no se procesa nada. Se limpia al reiniciar/enviar.
+var ultimaFraseBase = '';
 
 if (!rec) document.getElementById('estado').textContent = 'Este navegador no soporta reconocimiento de voz. Usa Chrome.';
 
@@ -129,10 +132,21 @@ if (rec) {
     var texto = ultimo[0].transcript;
     document.getElementById('transcript').textContent = '"' + texto + '"';
     if (ultimo.isFinal) {
-      var limpio = texto.trim().toLowerCase();
-      if (!limpio || frasesProcesadas[limpio]) return;
-      frasesProcesadas[limpio] = true;
-      procesarFrase(texto);
+      var limpio = texto.trim();
+      if (!limpio) return;
+      var limpioLower = limpio.toLowerCase();
+      var baseLower = ultimaFraseBase.toLowerCase();
+      var aProcesar;
+      if (baseLower && limpioLower === baseLower) {
+        aProcesar = ''; // repetición exacta: nada nuevo que procesar
+      } else if (baseLower && limpioLower.indexOf(baseLower) === 0) {
+        aProcesar = limpio.slice(ultimaFraseBase.length).trim(); // solo la parte nueva
+        ultimaFraseBase = limpio;
+      } else {
+        aProcesar = limpio; // frase nueva, sin relación con la anterior
+        ultimaFraseBase = limpio;
+      }
+      if (aProcesar) procesarFrase(aProcesar);
     }
   };
   rec.onerror = function(e) {
@@ -198,6 +212,13 @@ function procesarFrase(textoOriginal) {
     ult.personalizacion = (ult.personalizacion ? ult.personalizacion + ' · ' : '') + 'sin ' + mSin[1].trim();
   }
 
+  // "con salsa de X" / "salsa de X" (sin ser "sin salsa de X") queda como salsa pedida
+  var mSalsa = t.match(/(?<!sin\s)(?:con\s+)?salsas?\s+de\s+([a-zñ\s]+?)(?:,|\.|$| y )/);
+  if (mSalsa && pedido.items.length) {
+    var ultSalsa = pedido.items[pedido.items.length - 1];
+    ultSalsa.salsas = (ultSalsa.salsas ? ultSalsa.salsas + ', ' : '') + mSalsa[1].trim();
+  }
+
   renderPedido();
 
   if (/mandalo|manda el pedido|envia el pedido|eso es todo|listo asi|enviar pedido/.test(t)) {
@@ -217,7 +238,7 @@ function renderPedido() {
   if (!pedido.items.length) { cont.innerHTML = '<div class="vacio">Todavía no hay ítems — empieza a hablar</div>'; }
   else {
     cont.innerHTML = pedido.items.map(function(it) {
-      var notas = [it.adiciones ? 'Adición: ' + it.adiciones : '', it.personalizacion || ''].filter(Boolean).join(' · ');
+      var notas = [it.adiciones ? 'Adición: ' + it.adiciones : '', it.salsas ? 'Salsa: ' + it.salsas : '', it.personalizacion || ''].filter(Boolean).join(' · ');
       return '<div><div class="item-row"><span>' + it.nombre + '</span><span>$' + it.precio.toLocaleString('es-CO') + '</span></div>'
         + (notas ? '<div class="item-nota">' + notas + '</div>' : '') + '</div>';
     }).join('');
@@ -227,7 +248,7 @@ function renderPedido() {
 
 function reiniciarPedido() {
   pedido = { tipo:'', mesa:'', items:[] };
-  frasesProcesadas = {};
+  ultimaFraseBase = '';
   document.getElementById('transcript').textContent = '';
   renderPedido();
 }
