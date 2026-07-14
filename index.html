@@ -110,6 +110,8 @@ var RecogClass = window.SpeechRecognition || window.webkitSpeechRecognition || n
 var rec = RecogClass ? new RecogClass() : null;
 var escuchando = false;
 var hablando = false; // true mientras la app está hablando, para no escucharse a sí misma
+var ultimaFraseTexto = '';
+var ultimaFraseTs = 0;
 
 if (!rec) document.getElementById('estado').textContent = 'Este navegador no soporta reconocimiento de voz. Usa Chrome.';
 
@@ -120,7 +122,18 @@ if (rec) {
     var ultimo = e.results[e.results.length - 1];
     var texto = ultimo[0].transcript;
     document.getElementById('transcript').textContent = '"' + texto + '"';
-    if (ultimo.isFinal) procesarFrase(texto);
+    if (ultimo.isFinal) {
+      // El reconocimiento continuo en Android a veces repite la misma frase
+      // final varias veces seguidas. Si llega idéntica en menos de 4s, se ignora.
+      var limpio = texto.trim().toLowerCase();
+      var ahora = Date.now();
+      if (limpio && limpio === ultimaFraseTexto && (ahora - ultimaFraseTs) < 4000) {
+        return;
+      }
+      ultimaFraseTexto = limpio;
+      ultimaFraseTs = ahora;
+      procesarFrase(texto);
+    }
   };
   rec.onerror = function(e) {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
