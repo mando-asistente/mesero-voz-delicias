@@ -98,12 +98,14 @@ var NUMS = {'un':1,'una':1,'uno':1,'dos':2,'tres':3,'cuatro':4,'cinco':5,'seis':
 var RecogClass = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 var rec = RecogClass ? new RecogClass() : null;
 var escuchando = false;
+var hablando = false; // true mientras la app está hablando, para no escucharse a sí misma
 
 if (!rec) document.getElementById('estado').textContent = 'Este navegador no soporta reconocimiento de voz. Usa Chrome.';
 
 if (rec) {
   rec.lang = 'es-CO'; rec.continuous = true; rec.interimResults = true;
   rec.onresult = function(e) {
+    if (hablando) return; // ignora cualquier cosa mientras la app está hablando
     var ultimo = e.results[e.results.length - 1];
     var texto = ultimo[0].transcript;
     document.getElementById('transcript').textContent = '"' + texto + '"';
@@ -115,7 +117,7 @@ if (rec) {
       document.getElementById('estado').textContent = 'Permiso de micrófono denegado';
     }
   };
-  rec.onend = function() { if (escuchando) setTimeout(function(){ try { rec.start(); } catch(x){} }, 150); };
+  rec.onend = function() { if (escuchando && !hablando) setTimeout(function(){ try { rec.start(); } catch(x){} }, 150); };
 }
 
 function toggleMic() {
@@ -134,6 +136,9 @@ function procesarFrase(textoOriginal) {
   var t = normaliza(textoOriginal);
 
   if (/reiniciar pedido|empezar de nuevo|cancelar pedido/.test(t)) { reiniciarPedido(); hablar('Pedido reiniciado'); return; }
+
+  var itemsAntes = pedido.items.length;
+  var tipoAntes = pedido.tipo;
 
   var mMesa = t.match(/mesa\s+(\d+)/);
   if (mMesa) { pedido.tipo = 'Mesa'; pedido.mesa = mMesa[1]; }
@@ -177,7 +182,8 @@ function procesarFrase(textoOriginal) {
     return;
   }
 
-  if (pedido.items.length || pedido.tipo) hablar('Anotado');
+  var huboCambio = (pedido.items.length !== itemsAntes) || (pedido.tipo !== tipoAntes);
+  if (huboCambio) hablar('Anotado');
 }
 
 function renderPedido() {
@@ -236,13 +242,23 @@ function enviarPedido() {
   });
 }
 
-// ─── VOZ (respuesta hablada) ───────────────────────────────────
+// ─── VOZ (respuesta hablada) ─────────────────────────────────────
+// Mientras la app habla, se apaga el micrófono para que no se escuche a
+// sí misma y entre en un bucle ("anotado, anotado, anotado...").
 var voz = window.speechSynthesis || null;
 function hablar(txt) {
   if (!voz) return;
   voz.cancel();
+  if (rec && escuchando) { try { rec.stop(); } catch(x){} }
+  hablando = true;
   var u = new SpeechSynthesisUtterance(txt);
   u.lang = 'es-CO'; u.rate = 0.92; u.volume = 1;
+  var reanudar = function() {
+    hablando = false;
+    if (escuchando && rec) { try { rec.start(); } catch(x){} }
+  };
+  u.onend = reanudar;
+  u.onerror = reanudar;
   voz.speak(u);
 }
 
