@@ -95,6 +95,17 @@ function normaliza(s){
 
 var NUMS = {'un':1,'una':1,'uno':1,'dos':2,'tres':3,'cuatro':4,'cinco':5,'seis':6,'siete':7,'ocho':8,'nueve':9,'diez':10};
 
+// El personal a veces pide las salchipapas por el precio en vez del nombre
+// de carta (ej. "salchipapa de 35" = Chori Burguer). Se traduce antes de
+// buscar en el menú.
+var ALIAS_PRECIO = [
+  [/salchipapas?\s+de\s+(35|treinta y cinco)\b/g, 'chori burguer'],
+  [/salchipapas?\s+de\s+(45|cuarenta y cinco)\b/g, 'extrafamiliar'],
+  [/salchipapas?\s+de\s+(26|veintiseis)\b/g, 'salchipapa familiar'],
+  [/salchipapas?\s+de\s+(18|dieciocho)\b/g, 'salchipapa especial'],
+  [/salchipapas?\s+de\s+(8|ocho)\b/g, 'salchipapa personal']
+];
+
 var RecogClass = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 var rec = RecogClass ? new RecogClass() : null;
 var escuchando = false;
@@ -137,8 +148,7 @@ function procesarFrase(textoOriginal) {
 
   if (/reiniciar pedido|empezar de nuevo|cancelar pedido/.test(t)) { reiniciarPedido(); hablar('Pedido reiniciado'); return; }
 
-  var itemsAntes = pedido.items.length;
-  var tipoAntes = pedido.tipo;
+  ALIAS_PRECIO.forEach(function(a){ t = t.replace(a[0], a[1]); });
 
   var mMesa = t.match(/mesa\s+(\d+)/);
   if (mMesa) { pedido.tipo = 'Mesa'; pedido.mesa = mMesa[1]; }
@@ -181,9 +191,9 @@ function procesarFrase(textoOriginal) {
     enviarPedido();
     return;
   }
-
-  var huboCambio = (pedido.items.length !== itemsAntes) || (pedido.tipo !== tipoAntes);
-  if (huboCambio) hablar('Anotado');
+  // Nota: ya no confirma "Anotado" por voz en cada frase — hablar mientras
+  // se escucha corta el micrófono un instante y se come lo que el mesero
+  // dice justo después. La lista de pedido en pantalla es la confirmación.
 }
 
 function renderPedido() {
