@@ -85,7 +85,13 @@ var ADICION_PRECIO = 3500;
 
 var pedido = { tipo:'', mesa:'', items:[] };
 
-function normaliza(s){ return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
+function normaliza(s){
+  var out = s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+  // variantes comunes de como el reconocimiento de voz transcribe ciertas palabras
+  out = out.replace(/\bburger\b/g, 'burguer');
+  out = out.replace(/\bsandwich\b/g, 'sanduche');
+  return out;
+}
 
 var NUMS = {'un':1,'una':1,'uno':1,'dos':2,'tres':3,'cuatro':4,'cinco':5,'seis':6,'siete':7,'ocho':8,'nueve':9,'diez':10};
 
