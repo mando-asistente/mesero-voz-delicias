@@ -110,8 +110,14 @@ var RecogClass = window.SpeechRecognition || window.webkitSpeechRecognition || n
 var rec = RecogClass ? new RecogClass() : null;
 var escuchando = false;
 var hablando = false; // true mientras la app está hablando, para no escucharse a sí misma
-var ultimaFraseTexto = '';
-var ultimaFraseTs = 0;
+
+// El reconocimiento continuo en Android reinicia su sesión cada varios
+// segundos, y al reiniciar a veces vuelve a entregar la última frase ya
+// procesada como si fuera nueva. En vez de una ventana de tiempo (que puede
+// ser más corta que el intervalo real entre reinicios), se recuerda cada
+// frase ya procesada en ESTE pedido y se ignora si se repite exacta,
+// sin importar cuánto tiempo pase. Se limpia al reiniciar o enviar el pedido.
+var frasesProcesadas = {};
 
 if (!rec) document.getElementById('estado').textContent = 'Este navegador no soporta reconocimiento de voz. Usa Chrome.';
 
@@ -123,15 +129,9 @@ if (rec) {
     var texto = ultimo[0].transcript;
     document.getElementById('transcript').textContent = '"' + texto + '"';
     if (ultimo.isFinal) {
-      // El reconocimiento continuo en Android a veces repite la misma frase
-      // final varias veces seguidas. Si llega idéntica en menos de 4s, se ignora.
       var limpio = texto.trim().toLowerCase();
-      var ahora = Date.now();
-      if (limpio && limpio === ultimaFraseTexto && (ahora - ultimaFraseTs) < 4000) {
-        return;
-      }
-      ultimaFraseTexto = limpio;
-      ultimaFraseTs = ahora;
+      if (!limpio || frasesProcesadas[limpio]) return;
+      frasesProcesadas[limpio] = true;
       procesarFrase(texto);
     }
   };
@@ -165,7 +165,7 @@ function procesarFrase(textoOriginal) {
 
   var mMesa = t.match(/mesa\s+(\d+)/);
   if (mMesa) { pedido.tipo = 'Mesa'; pedido.mesa = mMesa[1]; }
-  else if (/para llevar/.test(t)) pedido.tipo = 'Para Llevar';
+  else if (/para\s+llevar|\bllevar\b/.test(t)) pedido.tipo = 'Para Llevar';
   else if (/domicilio/.test(t)) pedido.tipo = 'Domicilio';
 
   var restante = t;
@@ -227,6 +227,7 @@ function renderPedido() {
 
 function reiniciarPedido() {
   pedido = { tipo:'', mesa:'', items:[] };
+  frasesProcesadas = {};
   document.getElementById('transcript').textContent = '';
   renderPedido();
 }
