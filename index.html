@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mesero por Voz — Delicias Gusbett</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gold:#c9a84c;--pend:#c0392b;--pend-bg:rgba(192,57,43,.15);--ok:#27ae60;--bg:#050302;--txt:#f2e8d4;--muted:#7a6045}
+body{background:var(--bg);color:var(--txt);font-family:'Lato',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px 40px;gap:20px}
+.brand{font-family:'Playfair Display',serif;font-size:1rem;color:var(--gold);letter-spacing:.1em;opacity:.8;text-align:center}
+.mic-btn{width:110px;height:110px;border-radius:50%;border:3px solid var(--gold);background:rgba(201,168,76,.07);cursor:pointer;font-size:2.6rem;display:flex;align-items:center;justify-content:center;transition:.3s;-webkit-tap-highlight-color:transparent;user-select:none;flex-shrink:0}
+.mic-btn.on{border-color:var(--pend);background:var(--pend-bg);animation:pulsar 1.4s ease infinite}
+@keyframes pulsar{0%,100%{box-shadow:0 0 0 0 rgba(192,57,43,.5)}60%{box-shadow:0 0 0 24px rgba(192,57,43,0)}}
+.estado{font-family:'Playfair Display',serif;font-size:.95rem;color:var(--muted);text-align:center;min-height:1.3em}
+.estado.on{color:var(--pend)}
+.transcript{max-width:420px;width:100%;text-align:center;font-size:.8rem;color:var(--muted);font-style:italic;min-height:1.2em}
+.pedido-box{width:100%;max-width:420px;border:1px solid rgba(201,168,76,.25);border-radius:16px;padding:16px 18px;background:rgba(255,255,255,.02)}
+.pedido-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.pedido-tipo{font-family:'Playfair Display',serif;color:var(--gold);font-size:1rem}
+.pedido-total{color:var(--gold);font-weight:700}
+.item-row{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:.9rem}
+.item-row:last-child{border-bottom:none}
+.item-nota{font-size:.72rem;color:var(--muted);margin-top:2px}
+.vacio{text-align:center;color:var(--muted);font-size:.85rem;padding:14px 0}
+.botones{display:flex;gap:10px;width:100%;max-width:420px}
+.btn{flex:1;padding:13px;border-radius:10px;border:1.5px solid var(--gold);background:transparent;color:var(--gold);font-weight:700;font-size:.85rem;cursor:pointer;letter-spacing:.03em}
+.btn.enviar{background:linear-gradient(135deg,#c9a84c,#8a6c1e);color:#0f0906;border:none}
+.btn:disabled{opacity:.4}
+.ayuda{max-width:420px;border:1px solid rgba(201,168,76,.15);border-radius:14px;padding:14px 18px;font-size:.76rem;color:var(--muted);line-height:1.9}
+.ayuda strong{color:var(--txt)}
+</style>
+</head>
+<body>
+
+<div class="brand">🎙️ Delicias Gusbett — Pedido por Voz (Mesero)</div>
+
+<button class="mic-btn" id="micBtn" onclick="toggleMic()">🎤</button>
+<div class="estado" id="estado">Toca el micrófono y di el pedido</div>
+<div class="transcript" id="transcript"></div>
+
+<div class="pedido-box">
+  <div class="pedido-head">
+    <div class="pedido-tipo" id="pedidoTipo">Sin tipo todavía</div>
+    <div class="pedido-total" id="pedidoTotal">$0</div>
+  </div>
+  <div id="listaItems"><div class="vacio">Todavía no hay ítems — empieza a hablar</div></div>
+</div>
+
+<div class="botones">
+  <button class="btn" onclick="reiniciarPedido()">Reiniciar</button>
+  <button class="btn enviar" id="btnEnviar" onclick="enviarPedido()" disabled>Enviar pedido</button>
+</div>
+
+<div class="ayuda">
+  <strong>Cómo hablarle:</strong> di el tipo ("mesa 4", "para llevar", "domicilio"), luego los productos con cantidad ("una Extrafamiliar", "dos Coca-Cola personal"), adiciones ("adición de chorizo") y notas ("sin cebolla"). Para enviar, di <strong>"mándalo"</strong> o toca "Enviar pedido".<br><br>
+  Esto es una primera versión básica: no maneja correcciones a media frase todavía — si te equivocas, di "reiniciar pedido" o toca "Reiniciar" y vuelve a empezar.
+</div>
+
+<script>
+// ─── BACKEND (mismo Apps Script de siempre, vía fetch para poder usar el micrófono) ─────
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbyMIgSEXl7dZXwqhUWtGTo5sRhEyPiCSE14LJ4jpg3gnmdSdZBzkZQ9kvkCtV63FIEBEA/exec';
+
+// ─── MENÚ REAL (mismo que Cocina.html / PedidoForm) ─────────────
+var MENU_FLAT = [];
+(function() {
+  var CAT = {
+    "Hamburguesas":[["Clásica de Pan",15000],["Clásica de Plátano",16000],["Hawaiana",16000],["Ranchera de Pan",20000],["Ranchera de Plátano",20000],["Doble Carne",18000],["Full",22000]],
+    "Perros":[["Perro Sencillo",12000],["Perro Americano",14000],["Chori Perro",16000]],
+    "Salchipapas":[["Salchipapa Personal",8000],["Salchipapa Especial",18000],["Salchipapa Familiar",26000],["Chori Burguer",35000],["Extrafamiliar",45000]],
+    "Cubanos":[["Cubano Sencillo",16000],["Cubano Mixto",18000],["Cubano Hawaiano",14000]],
+    "Desgranado":[["Desgranado de Maíz",22000]],
+    "Heladería":[["Ensalada de Frutas",15000],["Banana Split",12000],["Brownie con Helado",8000],["Estrella con Helado",6000],["Vaso con Helado",3000],["Malteada",12000]],
+    "Jugos":[["Jugo Personal en Agua",3500],["Jugo Personal en Leche",5500],["Jarra en Agua",7000],["Jarra en Leche",11000]],
+    "Gaseosas":[["Coca-Cola Personal",3500],["Coca-Cola Litro",6500],["Coca-Cola 1.5L",7500],["Pepsi Personal",3500],["Pepsi 250ml",2000],["Pepsi 1.5L",6500],["Postobón Manzana Personal",3500],["Postobón Manzana 1.5L",6500],["Postobón Uva Personal",3500],["Postobón Uva 1.5L",6500],["Postobón Naranja Personal",3500],["Postobón Naranja 1.5L",6500],["Colombiana Personal",3500],["Colombiana 1.5L",6500],["Hit Mora Personal",3500],["Hit Mango Personal",3500],["Hit Lulo Personal",3500],["Hit Tropical Personal",3500],["Hit Naranja Piña Personal",3500],["Pony Personal",3500],["Pony Mini",2000]],
+    "Snacks":[["Choco Cono Mega Maní",3500],["Choco Cono Nucita",3500],["Casero de Coco",2500],["Casero de Mora",2500],["Fruly Rojo",2500],["Fruly Verde",2500],["Chupileta",2500],["Risadas",2500],["Tocineta Snack",2500],["Golpe con Todo",3500],["Plátano Verde",2200]]
+  };
+  Object.keys(CAT).forEach(function(cat){
+    CAT[cat].forEach(function(it){ MENU_FLAT.push({nombre:it[0], precio:it[1], categoria:cat}); });
+  });
+  MENU_FLAT.sort(function(a,b){ return b.nombre.length - a.nombre.length; });
+})();
+var ADICION_PRECIO = 3500;
+
+var pedido = { tipo:'', mesa:'', items:[] };
+
+function normaliza(s){ return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(); }
+
+var NUMS = {'un':1,'una':1,'uno':1,'dos':2,'tres':3,'cuatro':4,'cinco':5,'seis':6,'siete':7,'ocho':8,'nueve':9,'diez':10};
+
+var RecogClass = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+var rec = RecogClass ? new RecogClass() : null;
+var escuchando = false;
+
+if (!rec) document.getElementById('estado').textContent = 'Este navegador no soporta reconocimiento de voz. Usa Chrome.';
+
+if (rec) {
+  rec.lang = 'es-CO'; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = function(e) {
+    var ultimo = e.results[e.results.length - 1];
+    var texto = ultimo[0].transcript;
+    document.getElementById('transcript').textContent = '"' + texto + '"';
+    if (ultimo.isFinal) procesarFrase(texto);
+  };
+  rec.onerror = function(e) {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      escuchando = false; actualizarUI(false);
+      document.getElementById('estado').textContent = 'Permiso de micrófono denegado';
+    }
+  };
+  rec.onend = function() { if (escuchando) setTimeout(function(){ try { rec.start(); } catch(x){} }, 150); };
+}
+
+function toggleMic() {
+  if (!rec) return;
+  escuchando = !escuchando;
+  if (escuchando) { try { rec.start(); actualizarUI(true); } catch(x){ escuchando=false; actualizarUI(false); } }
+  else { rec.stop(); actualizarUI(false); }
+}
+function actualizarUI(on) {
+  var btn = document.getElementById('micBtn'); var est = document.getElementById('estado');
+  if (on) { btn.classList.add('on'); est.classList.add('on'); est.textContent = 'Escuchando...'; }
+  else { btn.classList.remove('on'); est.classList.remove('on'); est.textContent = 'Toca el micrófono y di el pedido'; }
+}
+
+function procesarFrase(textoOriginal) {
+  var t = normaliza(textoOriginal);
+
+  if (/reiniciar pedido|empezar de nuevo|cancelar pedido/.test(t)) { reiniciarPedido(); hablar('Pedido reiniciado'); return; }
+
+  var mMesa = t.match(/mesa\s+(\d+)/);
+  if (mMesa) { pedido.tipo = 'Mesa'; pedido.mesa = mMesa[1]; }
+  else if (/para llevar/.test(t)) pedido.tipo = 'Para Llevar';
+  else if (/domicilio/.test(t)) pedido.tipo = 'Domicilio';
+
+  var restante = t;
+  MENU_FLAT.forEach(function(prod) {
+    var nombreNorm = normaliza(prod.nombre);
+    var idx = restante.indexOf(nombreNorm);
+    if (idx === -1) return;
+
+    var antes = restante.slice(0, idx).trim().split(/\s+/);
+    var ultimaPalabra = antes[antes.length - 1] || '';
+    var cantidad = NUMS[ultimaPalabra] || 1;
+
+    var esAdicionExtra = /adicion\s+de\s+$/.test(restante.slice(0, idx));
+
+    if (esAdicionExtra && pedido.items.length) {
+      var ultimo = pedido.items[pedido.items.length - 1];
+      ultimo.adiciones = (ultimo.adiciones ? ultimo.adiciones + ', ' : '') + prod.nombre;
+      ultimo.precio += ADICION_PRECIO;
+    } else {
+      for (var i = 0; i < cantidad; i++) {
+        pedido.items.push({ nombre: prod.nombre, cantidad: 1, precio: prod.precio, adiciones:'', salsas:'', personalizacion:'' });
+      }
+    }
+    restante = restante.slice(0, idx) + ' '.repeat(nombreNorm.length) + restante.slice(idx + nombreNorm.length);
+  });
+
+  var mSin = t.match(/sin\s+([a-zñ\s]+?)(?:,|\.|$| y )/);
+  if (mSin && pedido.items.length) {
+    var ult = pedido.items[pedido.items.length - 1];
+    ult.personalizacion = (ult.personalizacion ? ult.personalizacion + ' · ' : '') + 'sin ' + mSin[1].trim();
+  }
+
+  renderPedido();
+
+  if (/mandalo|manda el pedido|envia el pedido|eso es todo|listo asi|enviar pedido/.test(t)) {
+    enviarPedido();
+    return;
+  }
+
+  if (pedido.items.length || pedido.tipo) hablar('Anotado');
+}
+
+function renderPedido() {
+  document.getElementById('pedidoTipo').textContent = pedido.tipo ? (pedido.tipo === 'Mesa' ? 'Mesa ' + pedido.mesa : pedido.tipo) : 'Sin tipo todavía';
+  var total = pedido.items.reduce(function(s,it){ return s + it.precio; }, 0);
+  document.getElementById('pedidoTotal').textContent = '$' + total.toLocaleString('es-CO');
+  var cont = document.getElementById('listaItems');
+  if (!pedido.items.length) { cont.innerHTML = '<div class="vacio">Todavía no hay ítems — empieza a hablar</div>'; }
+  else {
+    cont.innerHTML = pedido.items.map(function(it) {
+      var notas = [it.adiciones ? 'Adición: ' + it.adiciones : '', it.personalizacion || ''].filter(Boolean).join(' · ');
+      return '<div><div class="item-row"><span>' + it.nombre + '</span><span>$' + it.precio.toLocaleString('es-CO') + '</span></div>'
+        + (notas ? '<div class="item-nota">' + notas + '</div>' : '') + '</div>';
+    }).join('');
+  }
+  document.getElementById('btnEnviar').disabled = !(pedido.items.length && pedido.tipo);
+}
+
+function reiniciarPedido() {
+  pedido = { tipo:'', mesa:'', items:[] };
+  document.getElementById('transcript').textContent = '';
+  renderPedido();
+}
+
+// ─── ENVIAR A COCINA (fetch al mismo backend de siempre) ────────
+function enviarPedido() {
+  if (!pedido.items.length || !pedido.tipo) { hablar('Falta el tipo de pedido o los productos'); return; }
+  if (escuchando) { try { rec.stop(); } catch(x){} }
+
+  var tipoFinal = pedido.tipo === 'Mesa' ? 'Mesa ' + pedido.mesa : pedido.tipo;
+  var data = {
+    tipo: tipoFinal, zona:'', direccion:'',
+    quienRecoge:'', nombre:'Pedido por voz', whatsapp:'', telefono:'',
+    cliente:'Mesero (voz)', pedidoNombre:'',
+    pago:'', cambio:'',
+    productos: pedido.items.map(function(it){
+      return { nombre: it.nombre, cantidad: it.cantidad, precio: it.precio, salsas: it.salsas, adiciones: it.adiciones, personalizacion: it.personalizacion };
+    })
+  };
+
+  document.getElementById('estado').textContent = 'Enviando a cocina...';
+  var url = GAS_URL + '?action=nuevoPedidoVoz&data=' + encodeURIComponent(JSON.stringify(data));
+
+  fetch(url).then(function(r){ return r.json(); }).then(function(r) {
+    if (r && r.success) {
+      hablar('Pedido enviado a cocina');
+      document.getElementById('estado').textContent = 'Pedido #' + (r.pedido || '') + ' enviado ✓';
+      reiniciarPedido();
+    } else {
+      hablar('Hubo un error enviando el pedido');
+      document.getElementById('estado').textContent = 'Error: ' + ((r && r.error) || 'intenta de nuevo');
+    }
+  }).catch(function() {
+    hablar('No se pudo enviar el pedido');
+    document.getElementById('estado').textContent = 'Error de conexión — intenta de nuevo';
+  });
+}
+
+// ─── VOZ (respuesta hablada) ───────────────────────────────────
+var voz = window.speechSynthesis || null;
+function hablar(txt) {
+  if (!voz) return;
+  voz.cancel();
+  var u = new SpeechSynthesisUtterance(txt);
+  u.lang = 'es-CO'; u.rate = 0.92; u.volume = 1;
+  voz.speak(u);
+}
+
+renderPedido();
+</script>
+</body>
+</html>
