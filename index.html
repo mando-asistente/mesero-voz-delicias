@@ -111,16 +111,17 @@ var rec = RecogClass ? new RecogClass() : null;
 var escuchando = false;
 var hablando = false; // true mientras la app está hablando, para no escucharse a sí misma
 
-// En frases largas, Android a veces "revisa" un resultado ya marcado como
-// final y lo vuelve a entregar completo pero más largo (ej: primero entrega
-// "para llevar salchipapa de 35" y momentos después entrega de nuevo
-// "para llevar salchipapa de 35 con salsa de ajo"). Si se reprocesara cada
-// entrega completa desde el inicio, el producto se agregaría dos veces.
-// Por eso se recuerda la frase más larga procesada hasta ahora y, cuando
-// llega una nueva que empieza igual (una "ampliación"), solo se procesa la
-// parte nueva al final. Si llega una frase idéntica (repetición del bug de
-// reinicio de Android), no se procesa nada. Se limpia al reiniciar/enviar.
+// Android a veces entrega el reconocimiento fragmentado en pedazos muy
+// chicos (ej. "salchipapa", luego "de", luego "35" por separado), y otras
+// veces "revisa" un resultado ya final y lo repite completo, más largo o
+// idéntico. Por eso: (1) se arma un texto acumulado con solo las palabras
+// nuevas que van llegando (usando la frase anterior como referencia para no
+// repetir lo ya escuchado), y (2) el pedido se reconstruye COMPLETO desde
+// ese texto acumulado cada vez — así una frase como "salchipapa de 35"
+// siempre se evalúa junta, sin importar en cuántos pedazos haya llegado.
+// Se limpia todo al reiniciar o enviar el pedido.
 var ultimaFraseBase = '';
+var textoCompletoPedido = '';
 
 if (!rec) document.getElementById('estado').textContent = 'Este navegador no soporta reconocimiento de voz. Usa Chrome.';
 
@@ -136,17 +137,17 @@ if (rec) {
       if (!limpio) return;
       var limpioLower = limpio.toLowerCase();
       var baseLower = ultimaFraseBase.toLowerCase();
-      var aProcesar;
+      var nuevo;
       if (baseLower && limpioLower === baseLower) {
-        aProcesar = ''; // repetición exacta: nada nuevo que procesar
+        nuevo = ''; // repetición exacta: nada nuevo que procesar
       } else if (baseLower && limpioLower.indexOf(baseLower) === 0) {
-        aProcesar = limpio.slice(ultimaFraseBase.length).trim(); // solo la parte nueva
+        nuevo = limpio.slice(ultimaFraseBase.length).trim(); // solo la parte nueva
         ultimaFraseBase = limpio;
       } else {
-        aProcesar = limpio; // frase nueva, sin relación con la anterior
+        nuevo = limpio; // frase nueva, sin relación con la anterior
         ultimaFraseBase = limpio;
       }
-      if (aProcesar) procesarFrase(aProcesar);
+      if (nuevo) procesarFragmentoNuevo(nuevo);
     }
   };
   rec.onerror = function(e) {
@@ -170,18 +171,41 @@ function actualizarUI(on) {
   else { btn.classList.remove('on'); est.classList.remove('on'); est.textContent = 'Toca el micrófono y di el pedido'; }
 }
 
-function procesarFrase(textoOriginal) {
-  var t = normaliza(textoOriginal);
+function procesarFragmentoNuevo(nuevo) {
+  var tNuevo = normaliza(nuevo);
 
-  if (/reiniciar pedido|empezar de nuevo|cancelar pedido/.test(t)) { reiniciarPedido(); hablar('Pedido reiniciado'); return; }
+  if (/reiniciar pedido|empezar de nuevo|cancelar pedido/.test(tNuevo)) {
+    reiniciarPedido();
+    hablar('Pedido reiniciado');
+    return;
+  }
 
+  textoCompletoPedido = (textoCompletoPedido ? textoCompletoPedido + ' ' : '') + nuevo;
+  reconstruirPedido();
+
+  if (/mandalo|manda el pedido|envia el pedido|eso es todo|listo asi|enviar pedido/.test(tNuevo)) {
+    enviarPedido();
+  }
+  // Nota: ya no confirma "Anotado" por voz en cada frase — hablar mientras
+  // se escucha corta el micrófono un instante y se come lo que el mesero
+  // dice justo después. La lista de pedido en pantalla es la confirmación.
+}
+
+// Reconstruye el pedido COMPLETO a partir de todo lo dicho hasta ahora
+// (textoCompletoPedido), en vez de ir sumando sobre pedazos sueltos. Así una
+// frase como "salchipapa de 35" se detecta bien sin importar en cuántos
+// trozos la haya entregado el reconocimiento de voz.
+function reconstruirPedido() {
+  var t = normaliza(textoCompletoPedido);
   ALIAS_PRECIO.forEach(function(a){ t = t.replace(a[0], a[1]); });
 
+  var tipo = pedido.tipo, mesa = pedido.mesa;
   var mMesa = t.match(/mesa\s+(\d+)/);
-  if (mMesa) { pedido.tipo = 'Mesa'; pedido.mesa = mMesa[1]; }
-  else if (/para\s+llevar|\bllevar\b/.test(t)) pedido.tipo = 'Para Llevar';
-  else if (/domicilio/.test(t)) pedido.tipo = 'Domicilio';
+  if (mMesa) { tipo = 'Mesa'; mesa = mMesa[1]; }
+  else if (/para\s+llevar|\bllevar\b/.test(t)) tipo = 'Para Llevar';
+  else if (/domicilio/.test(t)) tipo = 'Domicilio';
 
+  var items = [];
   var restante = t;
   MENU_FLAT.forEach(function(prod) {
     var nombreNorm = normaliza(prod.nombre);
@@ -194,40 +218,31 @@ function procesarFrase(textoOriginal) {
 
     var esAdicionExtra = /adicion\s+de\s+$/.test(restante.slice(0, idx));
 
-    if (esAdicionExtra && pedido.items.length) {
-      var ultimo = pedido.items[pedido.items.length - 1];
-      ultimo.adiciones = (ultimo.adiciones ? ultimo.adiciones + ', ' : '') + prod.nombre;
-      ultimo.precio += ADICION_PRECIO;
+    if (esAdicionExtra && items.length) {
+      var ultimoAd = items[items.length - 1];
+      ultimoAd.adiciones = (ultimoAd.adiciones ? ultimoAd.adiciones + ', ' : '') + prod.nombre;
+      ultimoAd.precio += ADICION_PRECIO;
     } else {
       for (var i = 0; i < cantidad; i++) {
-        pedido.items.push({ nombre: prod.nombre, cantidad: 1, precio: prod.precio, adiciones:'', salsas:'', personalizacion:'' });
+        items.push({ nombre: prod.nombre, cantidad: 1, precio: prod.precio, adiciones:'', salsas:'', personalizacion:'' });
       }
     }
     restante = restante.slice(0, idx) + ' '.repeat(nombreNorm.length) + restante.slice(idx + nombreNorm.length);
   });
 
   var mSin = t.match(/sin\s+([a-zñ\s]+?)(?:,|\.|$| y )/);
-  if (mSin && pedido.items.length) {
-    var ult = pedido.items[pedido.items.length - 1];
-    ult.personalizacion = (ult.personalizacion ? ult.personalizacion + ' · ' : '') + 'sin ' + mSin[1].trim();
+  if (mSin && items.length) {
+    items[items.length - 1].personalizacion = 'sin ' + mSin[1].trim();
   }
 
   // "con salsa de X" / "salsa de X" (sin ser "sin salsa de X") queda como salsa pedida
   var mSalsa = t.match(/(?<!sin\s)(?:con\s+)?salsas?\s+de\s+([a-zñ\s]+?)(?:,|\.|$| y )/);
-  if (mSalsa && pedido.items.length) {
-    var ultSalsa = pedido.items[pedido.items.length - 1];
-    ultSalsa.salsas = (ultSalsa.salsas ? ultSalsa.salsas + ', ' : '') + mSalsa[1].trim();
+  if (mSalsa && items.length) {
+    items[items.length - 1].salsas = mSalsa[1].trim();
   }
 
+  pedido = { tipo: tipo, mesa: mesa, items: items };
   renderPedido();
-
-  if (/mandalo|manda el pedido|envia el pedido|eso es todo|listo asi|enviar pedido/.test(t)) {
-    enviarPedido();
-    return;
-  }
-  // Nota: ya no confirma "Anotado" por voz en cada frase — hablar mientras
-  // se escucha corta el micrófono un instante y se come lo que el mesero
-  // dice justo después. La lista de pedido en pantalla es la confirmación.
 }
 
 function renderPedido() {
@@ -249,6 +264,7 @@ function renderPedido() {
 function reiniciarPedido() {
   pedido = { tipo:'', mesa:'', items:[] };
   ultimaFraseBase = '';
+  textoCompletoPedido = '';
   document.getElementById('transcript').textContent = '';
   renderPedido();
 }
